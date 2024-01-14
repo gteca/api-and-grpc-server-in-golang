@@ -114,6 +114,19 @@ func (server *Grpc) ExecutePayment(ctx context.Context, payment *operations.Paym
 		}, errors.New(result)
 	}
 
+	proceed := server.HasSufficientBalance(account.Balance, payment.Amount)
+	log.Printf("Proceed: %v", proceed)
+
+	if !proceed {
+
+		log.Printf("proceed? %v", proceed)
+
+		return &operations.PaymentResp{
+			Success:       false,
+			TransactionId: transactionId,
+		}, errors.New("User has no sufficient funds")
+	}
+
 	account.Balance -= payment.Amount
 
 	if err := db.UpdateAccount(server.DB, &account); err != nil {
@@ -144,6 +157,11 @@ func (server *Grpc) getAccountByCardNumber(cardNumber string) (db.Account, strin
 	result = GRPC_SUCCESS
 
 	return account, result
+}
+
+func (server *Grpc) HasSufficientBalance(balance float32, amount float32) bool {
+
+	return balance-amount > 0.0
 }
 
 func sendResponse(w http.ResponseWriter, statusCode int, payload interface{}) {

@@ -22,7 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OperationsClient interface {
-	ExecutePayment(ctx context.Context, in *Payment, opts ...grpc.CallOption) (*PaymentStatus, error)
+	ExecutePayment(ctx context.Context, in *PaymentReq, opts ...grpc.CallOption) (*PaymentResp, error)
 }
 
 type operationsClient struct {
@@ -33,8 +33,8 @@ func NewOperationsClient(cc grpc.ClientConnInterface) OperationsClient {
 	return &operationsClient{cc}
 }
 
-func (c *operationsClient) ExecutePayment(ctx context.Context, in *Payment, opts ...grpc.CallOption) (*PaymentStatus, error) {
-	out := new(PaymentStatus)
+func (c *operationsClient) ExecutePayment(ctx context.Context, in *PaymentReq, opts ...grpc.CallOption) (*PaymentResp, error) {
+	out := new(PaymentResp)
 	err := c.cc.Invoke(ctx, "/Operations/ExecutePayment", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func (c *operationsClient) ExecutePayment(ctx context.Context, in *Payment, opts
 // All implementations must embed UnimplementedOperationsServer
 // for forward compatibility
 type OperationsServer interface {
-	ExecutePayment(context.Context, *Payment) (*PaymentStatus, error)
+	ExecutePayment(context.Context, *PaymentReq) (*PaymentResp, error)
 	mustEmbedUnimplementedOperationsServer()
 }
 
@@ -54,7 +54,7 @@ type OperationsServer interface {
 type UnimplementedOperationsServer struct {
 }
 
-func (UnimplementedOperationsServer) ExecutePayment(context.Context, *Payment) (*PaymentStatus, error) {
+func (UnimplementedOperationsServer) ExecutePayment(context.Context, *PaymentReq) (*PaymentResp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExecutePayment not implemented")
 }
 func (UnimplementedOperationsServer) mustEmbedUnimplementedOperationsServer() {}
@@ -71,7 +71,7 @@ func RegisterOperationsServer(s grpc.ServiceRegistrar, srv OperationsServer) {
 }
 
 func _Operations_ExecutePayment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Payment)
+	in := new(PaymentReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func _Operations_ExecutePayment_Handler(srv interface{}, ctx context.Context, de
 		FullMethod: "/Operations/ExecutePayment",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OperationsServer).ExecutePayment(ctx, req.(*Payment))
+		return srv.(OperationsServer).ExecutePayment(ctx, req.(*PaymentReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }

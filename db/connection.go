@@ -14,6 +14,17 @@ type Account struct {
 	IsCardActive bool    `json:"iscardactive"`
 }
 
+func GetAccountByCardNumber(conndb *sql.DB, cardNumber string) (Account, error) {
+
+	query := fmt.Sprintf("select * from accounts where card_number = % v", cardNumber)
+
+	row := conndb.QueryRow(query)
+	account := Account{}
+	err := row.Scan(&account.Id, &account.Name, &account.Balance, &account.CardNumber, &account.IsCardActive)
+
+	return account, err
+}
+
 func GetAccounts(conndb *sql.DB) ([]Account, error) {
 
 	query := "select * from accounts"
@@ -38,7 +49,7 @@ func GetAccounts(conndb *sql.DB) ([]Account, error) {
 	return accounts, nil
 }
 
-func GetAccount(conndb *sql.DB, id int) (Account, error) {
+func GetAccountByID(conndb *sql.DB, id int) (Account, error) {
 
 	query := fmt.Sprintf("select * from accounts where id = % v", id)
 

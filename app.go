@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/gteca/bank-app/operations"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
 )
@@ -24,37 +26,66 @@ const (
 	DBPASSWD = "fakebank1234"
 )
 
-type App struct {
+type Api struct {
 	Router *mux.Router
 	DB     *sql.DB
 }
 
-type bankServer struct {
+type Grpc struct {
 	operations.UnimplementedOperationsServer
+	DB *sql.DB
 }
 
-func (app *App) Initialise() error {
+const (
+	GRPC_SUCCESS               = "Success"
+	GRPC_NO_USER_FOUND         = "No User with such credit card found"
+	GRPC_INTERNAL_SERVER_ERROR = "Internal Server Error"
+)
+
+func InitDB() (*sql.DB, error) {
 
 	connectionInfo := fmt.Sprintf("%v:%v@tcp(127.0.0.1:3306)/%v", DBUSER, DBPASSWD, DBNAME)
 	var err error
-	app.DB, err = sql.Open("mysql", connectionInfo)
+	db, err := sql.Open("mysql", connectionInfo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	app.Router = mux.NewRouter().StrictSlash(true)
-	app.HandleRoutes()
+	return db, nil
+}
+
+func (server *Grpc) InitGrpcServer() {
+
+	dbConn, err := InitDB()
+	if err != nil {
+		log.Println("Error closing database:", err)
+	}
+
+	server.DB = dbConn
+}
+
+func (api *Api) InitApiServer() error {
+
+	dbConn, err := InitDB()
+	if err != nil {
+		log.Println("Error closing database:", err)
+	}
+
+	api.DB = dbConn
+
+	api.Router = mux.NewRouter().StrictSlash(true)
+	api.HandleRoutes()
 
 	return nil
 }
 
-func (app *App) RunApiServer(ipPort string) {
+func (api *Api) RunApiServer(ipPort string) {
 
 	log.Printf("API Server listening on %v", ipPort)
-	log.Fatal(http.ListenAndServe(ipPort, app.Router))
+	log.Fatal(http.ListenAndServe(ipPort, api.Router))
 }
 
-func (app *App) RunGrpcServer(ipPort string) {
+func (server *Grpc) RunGrpcServer(ipPort string) {
 
 	log.Printf("GRPC Server listening on %v", ipPort)
 	listener, err := net.Listen("tcp", ipPort)
@@ -63,20 +94,56 @@ func (app *App) RunGrpcServer(ipPort string) {
 	}
 
 	grpcServer := grpc.NewServer()
-	operations.RegisterOperationsServer(grpcServer, &bankServer{})
+	operations.RegisterOperationsServer(grpcServer, server)
 
 	log.Fatal(grpcServer.Serve(listener))
+
 }
 
-func (s bankServer) ExecutePayment(ctx context.Context, payment *operations.Payment) (*operations.PaymentStatus, error) {
+func (server *Grpc) ExecutePayment(ctx context.Context, payment *operations.PaymentReq) (*operations.PaymentResp, error) {
+	log.Printf("Received transaction request for amount: %v for card: %s", payment.Amount, payment.CardNumber)
 
-	log.Printf("Received transaction request for amount: %d from UserId: %s", payment.Amount, payment.UserId)
+	transactionId := uuid.New().String()
 
-	response := &operations.PaymentStatus{
-		Result:        "success",
-		TransactionId: "ewdewndewn4330439r3329",
+	account, result := server.getAccountByCardNumber(payment.CardNumber)
+	if result != GRPC_SUCCESS {
+		log.Printf("Failed to retrieve account for CardNumber: %s", payment.CardNumber)
+		return &operations.PaymentResp{
+			Success:       false,
+			TransactionId: transactionId,
+		}, errors.New(result)
 	}
-	return response, nil
+
+	account.Balance -= payment.Amount
+
+	if err := db.UpdateAccount(server.DB, &account); err != nil {
+		return &operations.PaymentResp{
+			Success:       false,
+			TransactionId: transactionId,
+		}, err
+	}
+
+	return &operations.PaymentResp{
+		Success:       true,
+		TransactionId: transactionId,
+	}, nil
+}
+
+func (server *Grpc) getAccountByCardNumber(cardNumber string) (db.Account, string) {
+
+	account, err := db.GetAccountByCardNumber(server.DB, cardNumber)
+	var result string
+	if err != nil {
+		switch err {
+		case sql.ErrNoRows:
+			result = GRPC_NO_USER_FOUND
+		default:
+			result = GRPC_INTERNAL_SERVER_ERROR
+		}
+	}
+	result = GRPC_SUCCESS
+
+	return account, result
 }
 
 func sendResponse(w http.ResponseWriter, statusCode int, payload interface{}) {
@@ -92,8 +159,8 @@ func sendError(w http.ResponseWriter, statusCode int, err string) {
 	sendResponse(w, statusCode, error_msg)
 }
 
-func (app *App) getAccounts(w http.ResponseWriter, r *http.Request) {
-	accounts, err := db.GetAccounts(app.DB)
+func (api *Api) getAccounts(w http.ResponseWriter, r *http.Request) {
+	accounts, err := db.GetAccounts(api.DB)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -102,14 +169,14 @@ func (app *App) getAccounts(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, http.StatusOK, accounts)
 }
 
-func (app *App) getAccount(w http.ResponseWriter, r *http.Request) {
+func (api *Api) getAccountByID(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "Cannot parse user id")
 	}
 
-	account, err := db.GetAccount(app.DB, id)
+	account, err := db.GetAccountByID(api.DB, id)
 	if err != nil {
 		switch err {
 		case sql.ErrNoRows:
@@ -123,7 +190,7 @@ func (app *App) getAccount(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, http.StatusOK, account)
 }
 
-func (app *App) createAccount(w http.ResponseWriter, r *http.Request) {
+func (api *Api) createAccount(w http.ResponseWriter, r *http.Request) {
 
 	var account db.Account
 	err := json.NewDecoder(r.Body).Decode(&account)
@@ -132,7 +199,7 @@ func (app *App) createAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.CreateAccount(app.DB, &account)
+	err = db.CreateAccount(api.DB, &account)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -141,7 +208,7 @@ func (app *App) createAccount(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, http.StatusCreated, account)
 }
 
-func (app *App) updateAccount(w http.ResponseWriter, r *http.Request) {
+func (api *Api) updateAccount(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
@@ -157,7 +224,7 @@ func (app *App) updateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	account.Id = id
-	err = db.UpdateAccount(app.DB, &account)
+	err = db.UpdateAccount(api.DB, &account)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -166,7 +233,7 @@ func (app *App) updateAccount(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, http.StatusNoContent, account)
 }
 
-func (app *App) deleteAccount(w http.ResponseWriter, r *http.Request) {
+func (api *Api) deleteAccount(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
@@ -174,7 +241,7 @@ func (app *App) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusInternalServerError, "Cannot parse user id")
 	}
 
-	err = db.DeleteAccount(app.DB, id)
+	err = db.DeleteAccount(api.DB, id)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -183,10 +250,10 @@ func (app *App) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, http.StatusOK, map[string]string{"result": "successful deletion"})
 }
 
-func (app *App) HandleRoutes() {
-	app.Router.HandleFunc("/account", app.getAccounts).Methods("GET")
-	app.Router.HandleFunc("/account/{id}", app.getAccount).Methods("GET")
-	app.Router.HandleFunc("/account", app.createAccount).Methods("POST")
-	app.Router.HandleFunc("/account/{id}", app.updateAccount).Methods("PUT")
-	app.Router.HandleFunc("/account/{id}", app.deleteAccount).Methods("DELETE")
+func (api *Api) HandleRoutes() {
+	api.Router.HandleFunc("/account", api.getAccounts).Methods("GET")
+	api.Router.HandleFunc("/account/{id}", api.getAccountByID).Methods("GET")
+	api.Router.HandleFunc("/account", api.createAccount).Methods("POST")
+	api.Router.HandleFunc("/account/{id}", api.updateAccount).Methods("PUT")
+	api.Router.HandleFunc("/account/{id}", api.deleteAccount).Methods("DELETE")
 }

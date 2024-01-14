@@ -1,24 +1,31 @@
 package main
 
 import (
+	"log"
 	"sync"
 )
 
 func main() {
-	app := App{}
-	app.Initialise()
+	api := Api{}
+	err := api.InitApiServer()
+	if err != nil {
+		log.Fatal("Failed to initialize the app:", err)
+	}
+
+	grpc := Grpc{}
+	grpc.InitGrpcServer()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		app.RunGrpcServer("localhost:8002")
+		grpc.RunGrpcServer("localhost:8002")
 	}()
 
 	go func() {
 		defer wg.Done()
-		app.RunApiServer("localhost:8001")
+		api.RunApiServer("localhost:8001")
 	}()
 
 	wg.Wait()

@@ -2,16 +2,16 @@ syntax = "proto3";
 
 option go_package = "github.com/gteca/bank-app/operations";
 
-message Payment {
-    uint64 amount = 1;
-    string userId = 2;
+message PaymentReq {
+    float amount     = 1;
+    string cardNumber = 2;
 }
 
-message PaymentStatus {
-    string result = 1;
+message PaymentResp {
+    bool   success       = 1;
     string transactionId = 2;
 }
 
 service Operations {
-    rpc ExecutePayment(Payment) returns (PaymentStatus) {}
+    rpc ExecutePayment(PaymentReq) returns (PaymentResp) {}
 }
